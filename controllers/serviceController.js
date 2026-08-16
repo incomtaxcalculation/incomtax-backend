@@ -1,5 +1,172 @@
 const Service = require("../models/Service");
 
+/* ------------------------------------------------------------------ */
+/* Normalizers                                                         */
+/* ------------------------------------------------------------------ */
+
+const str = (v) => (v === undefined || v === null ? "" : String(v));
+
+// ["a", "b"] — also tolerates [{ text: "a" }] and a newline/comma separated string
+const toStringList = (value) => {
+  if (typeof value === "string") {
+    return value
+      .split(/\r?\n|,/)
+      .map((v) => v.trim())
+      .filter(Boolean);
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (item && typeof item === "object" ? str(item.text ?? item.value) : str(item)))
+    .map((v) => v.trim())
+    .filter(Boolean);
+};
+
+// [{ text }] — also tolerates ["a", "b"]
+const toTextItems = (value) =>
+  toStringList(value).map((text) => ({ text }));
+
+// Generic object-list normalizer: keeps only the known keys of a sub-document
+const toObjectList = (value, mapFn) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === "object")
+    .map(mapFn);
+};
+
+const toIncludedServices = (value) =>
+  toObjectList(value, (item) => ({
+    title: str(item.title),
+    description: str(item.description),
+    icon: str(item.icon),
+  }));
+
+const toProcessSteps = (value) =>
+  toObjectList(value, (item, index) => ({
+    step: Number.isFinite(Number(item.step)) && item.step !== "" ? Number(item.step) : index + 1,
+    title: str(item.title),
+    description: str(item.description),
+    icon: str(item.icon),
+  }));
+
+const toDocumentRequirements = (value) =>
+  toObjectList(value, (item) => ({
+    applicantType: str(item.applicantType),
+    icon: str(item.icon),
+    documents: toStringList(item.documents),
+  }));
+
+const toTimelineMetrics = (value) =>
+  toObjectList(value, (item) => ({
+    label: str(item.label),
+    value: str(item.value),
+    icon: str(item.icon),
+  }));
+
+const toWhyChooseFeatures = (value) =>
+  toObjectList(value, (item) => ({
+    title: str(item.title),
+    description: str(item.description),
+    icon: str(item.icon),
+  }));
+
+const toTestimonials = (value) =>
+  toObjectList(value, (item) => ({
+    name: str(item.name),
+    designation: str(item.designation),
+    content: str(item.content),
+    avatar: str(item.avatar),
+  }));
+
+/* ------------------------------------------------------------------ */
+/* Field maps                                                          */
+/* ------------------------------------------------------------------ */
+
+// Plain string fields, applied as-is. `featureImage` is handled separately.
+const STRING_FIELDS = [
+  "short_description",
+  "icon",
+  "featureImageAlt",
+  "author",
+  "seo_title",
+  "seo_description",
+  "focus_keyword",
+  "badge",
+  "heroDescription",
+  "primaryButton",
+  "secondaryButton",
+  "struggleHeadingBefore",
+  "struggleHeadingHighlight",
+  "solutionIntro",
+  "servicesHeadingBefore",
+  "servicesHeadingHighlight",
+  "servicesHeadingAfter",
+  "processHeadingBefore",
+  "processHeadingHighlight",
+  "requiredDocsTitle",
+  "timeRequiredTitle",
+  "fastProcessingText",
+  "whyChooseHeadingBefore",
+  "whyChooseHeadingHighlight",
+  "testimonialsTitle",
+  "ctaTitle",
+  "ctaHighlight",
+  "ctaDescription",
+  "ctaApplyButton",
+  "ctaPhone",
+  "ctaWhatsapp",
+  "ctaCallButton",
+  "ctaWhatsappButton",
+];
+
+const ARRAY_FIELDS = {
+  trustPoints: toStringList,
+  commonProblems: toTextItems,
+  solutions: toTextItems,
+  includedServices: toIncludedServices,
+  processSteps: toProcessSteps,
+  documentRequirements: toDocumentRequirements,
+  timelineMetrics: toTimelineMetrics,
+  whyChooseFeatures: toWhyChooseFeatures,
+  testimonials: toTestimonials,
+};
+
+const has = (body, key) => Object.prototype.hasOwnProperty.call(body, key);
+
+// Builds the set of fields to write. On create every field gets a value; on
+// update only the keys actually present in the body are touched.
+const buildPayload = (body, { partial }) => {
+  const data = {};
+
+  for (const key of STRING_FIELDS) {
+    if (!partial || has(body, key)) data[key] = str(body[key]);
+  }
+
+  for (const [key, normalize] of Object.entries(ARRAY_FIELDS)) {
+    if (!partial || has(body, key)) data[key] = normalize(body[key]);
+  }
+
+  if (!partial || has(body, "status")) {
+    data.status = body.status === "inactive" ? "inactive" : "active";
+  }
+
+  return data;
+};
+
+const serialize = (service) => {
+  const obj = service.toObject();
+  return {
+    ...obj,
+    id: service._id,
+    featureImage: obj.featureImage || "",
+    created_at: service.createdAt,
+    updated_at: service.updatedAt,
+  };
+};
+
+/* ------------------------------------------------------------------ */
+/* Handlers                                                            */
+/* ------------------------------------------------------------------ */
+
 exports.getServices = async (req, res) => {
   try {
     const {
@@ -45,20 +212,7 @@ exports.getServices = async (req, res) => {
       Service.countDocuments(filter),
     ]);
 
-    const mapped = services.map((s) => ({
-      ...s.toObject(),
-      id: s._id,
-      featureImage: s.feature_image || "",
-      featureImageAlt: s.feature_image_alt || "",
-      icon: s.icon || "",
-      seo_title: s.seo_title || "",
-      seo_description: s.seo_description || "",
-      focus_keyword: s.focus_keyword || "",
-      created_at: s.createdAt,
-      updated_at: s.updatedAt,
-    }));
-
-    res.json({ services: mapped, total });
+    res.json({ services: services.map(serialize), total });
   } catch (err) {
     console.error("Get services error:", err);
     res.status(500).json({ msg: "Failed to fetch services", error: err.message });
@@ -70,20 +224,7 @@ exports.getService = async (req, res) => {
     const service = await Service.findOne({ slug: req.params.slug });
     if (!service) return res.status(404).json({ msg: "Service not found" });
 
-    res.json({
-      service: {
-        ...service.toObject(),
-        id: service._id,
-        featureImage: service.feature_image || "",
-        featureImageAlt: service.feature_image_alt || "",
-        icon: service.icon || "",
-        seo_title: service.seo_title || "",
-        seo_description: service.seo_description || "",
-        focus_keyword: service.focus_keyword || "",
-        created_at: service.createdAt,
-        updated_at: service.updatedAt,
-      },
-    });
+    res.json({ service: serialize(service) });
   } catch (err) {
     console.error("Get service error:", err);
     res.status(500).json({ msg: "Failed to fetch service", error: err.message });
@@ -105,20 +246,17 @@ exports.checkSlug = async (req, res) => {
 
 exports.createService = async (req, res) => {
   try {
-    const { title, slug, short_description, long_description, featureImageAlt, status, featureImage, icon, seo_title, seo_description, focus_keyword } = req.body;
+    const { title, slug, featureImage } = req.body;
+
+    if (!title || !slug) {
+      return res.status(400).json({ msg: "Title and slug are required" });
+    }
 
     const service = await Service.create({
+      ...buildPayload(req.body, { partial: false }),
       title,
       slug,
-      short_description: short_description || "",
-      long_description: long_description || "",
-      feature_image: featureImage || null,
-      feature_image_alt: featureImageAlt || "",
-      icon: icon || "",
-      status: status || "active",
-      seo_title: seo_title || "",
-      seo_description: seo_description || "",
-      focus_keyword: focus_keyword || "",
+      featureImage: featureImage || null,
     });
 
     res.json({ msg: "Service Created Successfully", id: service._id });
@@ -134,29 +272,24 @@ exports.createService = async (req, res) => {
 exports.updateService = async (req, res) => {
   try {
     const { slug: oldSlug } = req.params;
-    const { title, slug: newSlug, short_description, long_description, featureImageAlt, status, featureImage, existingFeatureImage, icon, seo_title, seo_description, focus_keyword } = req.body;
+    const { title, slug: newSlug, featureImage, existingFeatureImage } = req.body;
 
     const service = await Service.findOne({ slug: oldSlug });
     if (!service) return res.status(404).json({ msg: "Service not found" });
 
-    let featureImageUrl = service.feature_image;
-    if (featureImage) {
-      featureImageUrl = featureImage;
-    } else if (existingFeatureImage === "") {
-      featureImageUrl = null;
+    const updates = buildPayload(req.body, { partial: true });
+    for (const [key, value] of Object.entries(updates)) {
+      service[key] = value;
     }
 
-    service.title = title || service.title;
-    service.slug = newSlug || oldSlug;
-    service.short_description = short_description ?? service.short_description;
-    service.long_description = long_description ?? service.long_description;
-    service.feature_image = featureImageUrl;
-    service.feature_image_alt = featureImageAlt ?? service.feature_image_alt;
-    service.icon = icon ?? service.icon;
-    service.status = status ?? service.status;
-    service.seo_title = seo_title ?? service.seo_title;
-    service.seo_description = seo_description ?? service.seo_description;
-    service.focus_keyword = focus_keyword ?? service.focus_keyword;
+    if (title) service.title = title;
+    if (newSlug) service.slug = newSlug;
+
+    if (featureImage) {
+      service.featureImage = featureImage;
+    } else if (existingFeatureImage === "") {
+      service.featureImage = null;
+    }
 
     await service.save();
     res.json({ msg: "Service Updated Successfully" });

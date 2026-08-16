@@ -31,9 +31,9 @@ const seed = async () => {
       slug: INCOME_TAX_REGISTRATION_SLUG,
       short_description:
         "Get your NTN registered with FBR quickly and hassle-free. We handle the entire income tax registration process for individuals, freelancers, and businesses.",
-      long_description: "",
       icon: "receipt-text",
       status: "active",
+      author: "Navigate",
       seo_title: "Income Tax Registration in Pakistan | NTN Registration",
       seo_description:
         "Professional income tax and NTN registration services in Pakistan. FBR compliant, fast processing for individuals, freelancers, and businesses.",
