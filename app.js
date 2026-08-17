@@ -9,9 +9,20 @@ const app = express();
 
 app.set("trust proxy", 1);
 
+const allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "")
+  .split(",")
+  .map((o) => o.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: true,
+    origin: (origin, callback) => {
+      // No Origin header: curl, server-to-server, same-origin — always allow.
+      if (!origin) return callback(null, true);
+      // Never throw here: a thrown error becomes a 500 with no CORS headers,
+      // which the browser reports as a confusing CORS failure.
+      callback(null, allowedOrigins.includes(origin.replace(/\/$/, "")));
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -50,7 +61,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
 });
